@@ -1,0 +1,106 @@
+(() => {
+  try {
+  const {TAMA}=window;
+  TAMA.theme?.init?.();
+  TAMA.modals?.init?.();
+  const year=TAMA.q('#year'); if(year) year.textContent=new Date().getFullYear();
+  const menuBtn=TAMA.q('#menuBtn'),siteMenu=TAMA.q('#siteMenu');
+  menuBtn?.addEventListener('click',()=>{siteMenu?.classList.toggle('hidden');menuBtn.classList.toggle('active')});
+  siteMenu?.addEventListener('click',e=>{if(e.target.closest('a')){siteMenu.classList.add('hidden');menuBtn?.classList.remove('active')}});
+  let products=[], reviews=[], search='', selectedProduct=null, rating=5, activeChatId=null;
+  const newToken=()=>{try{if(window.crypto?.randomUUID)return window.crypto.randomUUID()}catch(e){} return 'tama_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2)+'_'+Math.random().toString(36).slice(2)};
+  let chatToken=localStorage.getItem('tama_chat_token')||newToken();
+  localStorage.setItem('tama_chat_token',chatToken);
+
+  function ensureReady(){if(TAMA.configError){TAMA.toast(TAMA.configMessage||'Konfigurasi Supabase belum tersedia. Tambahkan SUPABASE_URL dan SUPABASE_ANON_KEY di Vercel.');return false}return true}
+  async function loadProducts(){if(!ensureReady())return; const {data,error}=await TAMA.sb.from('products').select('*').order('created_at',{ascending:false}); if(error){TAMA.toast(error.message);return} products=data||[];renderProducts()}
+  function renderProducts(){const grid=TAMA.q('#productGrid'), empty=TAMA.q('#emptyState'); const s=search.trim().toLowerCase(); const list=products.filter(p=>(!s||(`${p.title} ${p.description}`.toLowerCase().includes(s)))); empty.classList.toggle('hidden',list.length!==0);grid.innerHTML=list.map(p=>`<article class="product-card"><img class="thumb" src="${TAMA.escape(p.thumbnail_url||'')}" alt="${TAMA.escape(p.title)}" data-zoom-src="${TAMA.escape(p.thumbnail_url||'')}" loading="lazy"><div class="product-body"><div class="product-title">${TAMA.escape(p.title)}</div><div class="price">${TAMA.rupiah(p.price)}</div><div class="availability"><span>●</span> Akun siap pakai · Masih tersedia</div><button class="info-btn" data-product="${p.id}">Info lengkap</button></div></article>`).join('')}
+  async function openProduct(id){const p=products.find(x=>x.id===id);if(!p)return; selectedProduct=p; let gallery=[]; const {data}=await TAMA.sb.from('product_images').select('*').eq('product_id',id).order('sort_order'); gallery=data||[]; const imgs=gallery.map(x=>x.image_url).filter(Boolean); TAMA.q('#productModalContent').innerHTML=`<div class="product-modal-grid"><div class="product-modal-main"><img src="${TAMA.escape(p.thumbnail_url||'')}" alt="${TAMA.escape(p.title)}" data-zoom-src="${TAMA.escape(p.thumbnail_url||'')}"><div class="gallery">${imgs.map(u=>`<img src="${TAMA.escape(u)}" alt="Foto spek" data-zoom-src="${TAMA.escape(u)}">`).join('')}</div></div><div><p class="eyebrow">INFORMASI LENGKAP</p><h2>${TAMA.escape(p.title)}</h2><div class="price">${TAMA.rupiah(p.price)}</div><p class="muted" style="white-space:pre-wrap">${TAMA.escape(p.description)}</p><div class="availability"><span>●</span> Akun siap pakai · Masih tersedia</div><a class="wa-btn" href="https://wa.me/62895391845923?text=${encodeURIComponent('Halo TAMA, saya tertarik dengan '+p.title+' - '+TAMA.rupiah(p.price))}" target="_blank" rel="noopener">Lanjutkan via WhatsApp</a></div></div>`;TAMA.q('#productModal').classList.remove('hidden')}
+
+  let reviewFilter='all';
+  function reviewText(r){return r.text||r.comment||r.review_text||r.content||r.message||''}
+  function renderReviewSummary(){
+    const el=TAMA.q('#reviewSummary');
+    if(!el)return;
+    const total=reviews.length;
+    const avg=total?reviews.reduce((a,r)=>a+Number(r.rating||0),0)/total:0;
+    const counts=[5,4,3,2,1].map(star=>reviews.filter(r=>Number(r.rating)===star).length);
+    el.innerHTML=`<div class="review-summary-score"><div class="review-average">${avg.toFixed(1).replace('.',',')}</div><div class="review-stars-big">${'★'.repeat(Math.round(avg))}${'☆'.repeat(5-Math.round(avg))}</div><div class="review-count">${total.toLocaleString('id-ID')} ulasan</div></div><div class="review-bars">${[5,4,3,2,1].map((star,i)=>{const pct=total?Math.round(counts[i]/total*100):0;return `<div class="review-bar-row"><span>${star}</span><div class="review-bar"><i style="width:${pct}%"></i></div><span>${counts[i]}</span></div>`}).join('')}</div>`;
+  }
+  function renderReviewFilters(){
+    const el=TAMA.q('#reviewFilters');
+    if(!el)return;
+    const filters=[['all','Semua'],['positive','Positif'],['critical','Kritis'],[5,'5 ★'],[4,'4 ★'],[3,'3 ★'],[2,'2 ★'],[1,'1 ★']];
+    el.innerHTML=filters.map(([key,label])=>`<button type="button" class="review-filter ${String(reviewFilter)===String(key)?'active':''}" data-review-filter="${key}">${label}</button>`).join('');
+  }
+  function renderReviews(){
+    const el=TAMA.q('#reviewsList');
+    if(!el)return;
+    let list=reviews;
+    if(reviewFilter==='positive')list=reviews.filter(r=>Number(r.rating)>=4);
+    else if(reviewFilter==='critical')list=reviews.filter(r=>Number(r.rating)<=2);
+    else if(['1','2','3','4','5'].includes(String(reviewFilter)))list=reviews.filter(r=>Number(r.rating)===Number(reviewFilter));
+    el.innerHTML=list.length?list.map(r=>{const rating=Math.max(1,Math.min(5,Number(r.rating)||5));const text=reviewText(r);const name=(r.username||'User').trim();const initial=TAMA.escape(name.slice(0,1).toUpperCase());return `<article class="review-card"><div class="review-top"><div class="review-avatar">${initial}</div><div class="review-user-block"><strong>${TAMA.escape(name)}</strong><span>Ulasan pembeli</span></div><button class="review-more" aria-label="Menu ulasan">⋮</button></div><div class="review-meta"><div class="review-stars">${'★'.repeat(rating)}${'☆'.repeat(5-rating)}</div><time>${new Date(r.created_at).toLocaleDateString('id-ID')}</time></div><p class="review-content">${TAMA.escape(text)}</p><div class="review-helpful"><span>Apakah ulasan ini membantu?</span><button type="button" class="help-btn">Ya</button><button type="button" class="help-btn">Tidak</button></div></article>`}).join(''):'<div class="empty">Belum ada ulasan untuk filter ini.</div>';
+  }
+  async function loadReviews(){
+    if(!ensureReady())return;
+    const {data,error}=await TAMA.sb.from('reviews').select('*').eq('published',true).order('created_at',{ascending:false}).limit(100);
+    if(error){TAMA.toast(error.message);return}
+    reviews=(data||[]).filter(r=>reviewText(r).trim());
+    renderReviewSummary();renderReviewFilters();renderReviews();
+  }
+  function ensureUser(next){if(TAMA.user.get()){next();return}TAMA.q('#loginModal').classList.remove('hidden');TAMA.q('#usernameInput').value='';TAMA.q('#usernameInput').focus();TAMA._afterLogin=next}
+  TAMA.q('#saveUsername')?.addEventListener('click',()=>{const v=TAMA.q('#usernameInput').value.trim();if(v.length<2)return TAMA.toast('Username minimal 2 karakter.');if(!/^[\w.-]+$/.test(v))return TAMA.toast('Gunakan huruf, angka, titik, strip, atau underscore.');TAMA.user.set(v);TAMA.q('#loginModal').classList.add('hidden');TAMA._afterLogin?.();TAMA._afterLogin=null});
+  TAMA.q('#reviewBtn')?.addEventListener('click',()=>ensureUser(()=>{TAMA.q('#reviewUsername').value=TAMA.user.get();TAMA.q('#reviewModal').classList.remove('hidden')}));
+  TAMA.q('#reviewFilters')?.addEventListener('click',e=>{const b=e.target.closest('[data-review-filter]');if(!b)return;reviewFilter=b.dataset.reviewFilter;renderReviewFilters();renderReviews()});
+  TAMA.q('#reviewsList')?.addEventListener('click',e=>{const b=e.target.closest('.help-btn');if(!b)return;const card=b.closest('.review-card');card?.querySelectorAll('.help-btn').forEach(x=>x.classList.remove('active'));b.classList.add('active')});
+  TAMA.qa('#starPicker button').forEach(b=>b.addEventListener('click',()=>{rating=Number(b.dataset.star);TAMA.qa('#starPicker button').forEach(x=>x.classList.toggle('active',Number(x.dataset.star)<=rating))}));
+  TAMA.q('#sendReview')?.addEventListener('click',async()=>{if(!ensureReady())return;const username=TAMA.q('#reviewUsername').value.trim(),text=TAMA.q('#reviewText').value.trim();if(username.length<2)return TAMA.toast('Nama / username minimal 2 karakter.');if(!/^[\w.-]+$/.test(username))return TAMA.toast('Nama / username hanya boleh huruf, angka, titik, strip, underscore.');if(!text)return TAMA.toast('Tulis ulasan dulu.');TAMA.user.set(username);const {error}=await TAMA.sb.from('reviews').insert({username,rating,text,comment:text});if(error)return TAMA.toast(error.message);TAMA.q('#reviewText').value='';TAMA.q('#reviewModal').classList.add('hidden');TAMA.toast('Ulasan berhasil dikirim.');loadReviews()});
+
+  function handleClosedChat(){
+    TAMA.q('#chatClosed')?.classList.remove('hidden');
+    TAMA.q('#chatInput')?.classList.add('hidden');
+    TAMA.q('#sendChat')?.classList.add('hidden');
+    TAMA.q('#endChat')?.classList.add('hidden');
+    TAMA.q('#newChatBtn')?.classList.add('hidden');
+    TAMA.q('#chatCategory')?.setAttribute('disabled','disabled');
+  }
+  async function startChat(){
+    ensureUser(async()=>{if(!ensureReady())return;TAMA.q('#chatGate').classList.add('hidden');TAMA.q('#chatBody').classList.remove('hidden');if(!activeChatId)await findOrCreateChat()})
+  }
+  async function findOrCreateChat(){
+    const {data,error}=await TAMA.sb.rpc('get_or_create_chat',{p_username:TAMA.user.get(),p_category:TAMA.q('#chatCategory').value,p_token:chatToken});
+    if(error){TAMA.toast(error.message);return}
+    activeChatId=data.id;TAMA.q('#chatCategory').value=data.category;await refreshChat();
+  }
+  async function refreshChat(){
+    if(!activeChatId)return;
+    const {data,error}=await TAMA.sb.rpc('get_user_chat',{p_chat_id:activeChatId,p_token:chatToken});
+    if(error)return;
+    const chat=data?.chat;const msgs=data?.messages||[];if(!chat)return;
+    const closed=chat.status==='closed';
+    TAMA.q('#chatCategory').value=chat.category;
+    TAMA.q('#chatMessages').innerHTML=msgs.map(m=>`<div class="msg ${m.sender_type==='user'?'user':'admin'}">${TAMA.escape(m.message)}<small>${new Date(m.created_at).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})}</small></div>`).join('');
+    TAMA.q('#chatClosed').classList.toggle('hidden',!closed);
+    TAMA.q('#chatInput').disabled=closed;TAMA.q('#sendChat').disabled=closed;TAMA.q('#endChat').classList.toggle('hidden',closed);TAMA.q('#newChatBtn').classList.toggle('hidden',closed);
+    TAMA.q('#chatInput').classList.toggle('hidden',closed);TAMA.q('#sendChat').classList.toggle('hidden',closed);TAMA.q('#chatCategory').disabled=closed;
+    const box=TAMA.q('#chatMessages');box.scrollTop=box.scrollHeight;
+  }
+  TAMA.q('#chatFab')?.addEventListener('click',()=>{TAMA.q('#chatPanel').classList.remove('hidden');if(TAMA.user.get())startChat()});
+  TAMA.q('#closeChatPanel')?.addEventListener('click',()=>TAMA.q('#chatPanel').classList.add('hidden'));
+  TAMA.q('#chatStart')?.addEventListener('click',startChat);
+  TAMA.q('#newChatBtn')?.addEventListener('click',async()=>{TAMA.toast('Chat sebelumnya sudah ditutup.');});
+  TAMA.q('#chatCategory')?.addEventListener('change',()=>{if(activeChatId)TAMA.q('#chatCategory').blur()});
+  async function sendChat(){if(!activeChatId||!ensureReady())return;const input=TAMA.q('#chatInput'),text=input.value.trim();if(!text)return;const {error}=await TAMA.sb.rpc('send_user_chat_message',{p_chat_id:activeChatId,p_token:chatToken,p_message:text});if(error)return TAMA.toast(error.message);input.value='';refreshChat()}
+  TAMA.q('#sendChat')?.addEventListener('click',sendChat);
+  TAMA.q('#chatInput')?.addEventListener('keydown',e=>{if(e.key==='Enter')sendChat()});
+  TAMA.q('#endChat')?.addEventListener('click',async()=>{if(!activeChatId)return;const {error}=await TAMA.sb.rpc('close_user_chat',{p_chat_id:activeChatId,p_token:chatToken});if(error)return TAMA.toast(error.message);await refreshChat();TAMA.toast('Live chat sudah ditutup dan tidak dapat dilanjutkan.')});
+  setInterval(()=>{if(activeChatId&&!TAMA.q('#chatPanel').classList.contains('hidden'))refreshChat()},2500);
+
+  TAMA.q('#searchInput')?.addEventListener('input',e=>{search=e.target.value;renderProducts()}); TAMA.q('#productGrid').addEventListener('click',e=>{const b=e.target.closest('[data-product]');if(b)openProduct(b.dataset.product)});
+  if(ensureReady()){loadProducts();loadReviews();}
+  } catch(err) {
+    console.error('TAMA app init error:', err);
+    window.TAMA?.toast?.('Terjadi error pada halaman. Muat ulang halaman.');
+  }
+})();
